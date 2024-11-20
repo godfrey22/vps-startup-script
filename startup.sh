@@ -6,23 +6,27 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Set up logging with timestamps
+# Default values
+DEFAULT_SSH_PORT=2222
+BACKUP_DIR="/var/backups/vps-setup"
 LOG_FILE="/var/log/vps_setup.log"
+
+# Create backup directory first
+mkdir -p "$BACKUP_DIR"
+
+# Set up logging with timestamps
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Enhanced cleanup with backup
-BACKUP_DIR="/var/backups/vps-setup"
+# Enhanced cleanup
 cleanup() {
     if [ -d "/tmp/ssh_setup" ]; then
         rm -rf "/tmp/ssh_setup"
     fi
-    # Keep backup files for potential recovery
-    mkdir -p "$BACKUP_DIR"
     cp "$LOG_FILE" "$BACKUP_DIR/vps_setup_$(date +%Y%m%d_%H%M%S).log"
 }
 trap cleanup EXIT
 
-# Enhanced logging functions with timestamps
+# Logging functions
 print_message() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${GREEN}[+] [$timestamp] $1${NC}"
@@ -41,7 +45,7 @@ print_error() {
     logger -t "vps-setup" "ERROR: $1"
 }
 
-# Enhanced error checking with line number reporting
+# Error handling
 check_status() {
     if [ $? -ne 0 ]; then
         print_error "Failed on line ${BASH_LINENO[0]}: $1"
@@ -49,7 +53,7 @@ check_status() {
     fi
 }
 
-# Enhanced command line argument parsing with validation
+# Argument parsing
 parse_arguments() {
     while [[ "$#" -gt 0 ]]; do
         case $1 in
@@ -76,7 +80,7 @@ parse_arguments() {
                 echo "Usage: $0 [--username USERNAME] [--ssh-port PORT] [--non-interactive]"
                 echo "Options:"
                 echo "  --username USERNAME    Specify the username to create"
-                echo "  --ssh-port PORT       Specify the SSH port to use"
+                echo "  --ssh-port PORT       Specify the SSH port to use (default: 2222)"
                 echo "  --non-interactive     Run without interactive prompts"
                 echo "  --help                Show this help message"
                 exit 0
@@ -88,238 +92,311 @@ parse_arguments() {
         esac
         shift
     done
+
+    # Set default values if not provided
+    SSH_PORT=${SSH_PORT:-$DEFAULT_SSH_PORT}
+    
+    # If not in non-interactive mode and username is not set, prompt for it
+    if [ -z "$USERNAME" ] && [ "$NON_INTERACTIVE" != "true" ]; then
+        read -p "Enter username: " USERNAME
+    fi
 }
 
-# Enhanced OS detection with version validation
+# OS detection using ID instead of NAME
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        OS=$NAME
-        VERSION=$VERSION_ID
-        print_message "Detected OS: $OS $VERSION"
+        OS=$ID
+        VERSION_ID=$VERSION_ID
+        print_message "Detected OS: $OS $VERSION_ID"
+        
+        case "$OS" in
+            ubuntu|debian|centos|rhel|fedora|arch)
+                print_message "Operating system is supported"
+                ;;
+            *)
+                print_error "Unsupported operating system: $OS"
+                exit 1
+                ;;
+        esac
     else
         print_error "Cannot detect OS"
         exit 1
     fi
-
-    # Validate supported OS
-    case "$OS" in
-        *"Ubuntu"*|*"Debian"*|*"CentOS"*|*"Red Hat"*|*"Fedora"*|*"Arch"*)
-            print_message "Operating system is supported"
-            ;;
-        *)
-            print_error "Unsupported operating system: $OS"
-            exit 1
-            ;;
-    esac
 }
 
-# Enhanced root check with detailed message
+# Root check
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        print_error "This script must be run as root or with sudo privileges"
+        print_error "This script must be run as root"
         exit 1
     fi
 }
 
-# Enhanced username validation with better pattern matching
+# Username validation
 validate_username() {
     local username=$1
-    
-    # Check for empty username
+
     if [ -z "$username" ]; then
         print_error "Username cannot be empty"
         exit 1
-    }
-    
-    # Check length
+    fi
+
     if [ ${#username} -lt 1 ] || [ ${#username} -gt 32 ]; then
         print_error "Username must be between 1 and 32 characters"
         exit 1
-    }
-    
-    # Check valid characters
-    if ! [[ "$username" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-        print_error "Invalid username. Use only letters, numbers, underscores, dashes, or periods."
-        exit 1
-    }
-    
-    # Check if username starts with valid character
-    if ! [[ "$username" =~ ^[a-zA-Z][a-zA-Z0-9._-]*$ ]]; then
-        print_error "Username must start with a letter"
-        exit 1
-    }
-}
+    fi
 
-# Enhanced SSH port validation with connection testing
-validate_ssh_port() {
-    local port=$1
-    
-    # Remove any non-numeric characters
-    port=$(echo $port | tr -dc '0-9')
-    
-    # Validate port number
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -le 0 ] || [ "$port" -gt 65535 ]; then
-        print_error "Invalid port number. Please enter a value between 1 and 65535."
+    if ! [[ "$username" =~ ^[a-zA-Z][a-zA-Z0-9._-]*$ ]]; then
+        print_error "Username must start with a letter and contain only letters, numbers, underscores, dashes, or periods"
         exit 1
     fi
-    
-    # Check if port is already in use
-    if netstat -tuln | grep ":$port " >/dev/null 2>&1; then
-        print_error "Port $port is already in use"
+}
+
+# SSH port validation
+validate_ssh_port() {
+    local port=$1
+
+    # Remove any non-numeric characters
+    port=$(echo "$port" | tr -dc '0-9')
+
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -le 0 ] || [ "$port" -gt 65535 ]; then
+        print_error "Invalid port number. Please enter a value between 1 and 65535"
         exit 1
-    }
-    
-    # Update the global SSH_PORT variable
+    fi
+
+    # Check if port is already in use (using ss if available, falling back to netstat)
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tuln | grep ":$port " >/dev/null 2>&1; then
+            print_error "Port $port is already in use"
+            exit 1
+        fi
+    elif command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln | grep ":$port " >/dev/null 2>&1; then
+            print_error "Port $port is already in use"
+            exit 1
+        fi
+    else
+        print_warning "Neither ss nor netstat available. Skipping port check"
+    fi
+
     SSH_PORT=$port
 }
 
-# Enhanced system update with backup
+# System update
 update_system() {
-    print_message "Creating package list backup..."
-    case "$OS" in
-        *"Ubuntu"*|*"Debian"*)
-            dpkg --get-selections > "$BACKUP_DIR/package_list.backup"
-            ;;
-        *"CentOS"*|*"Red Hat"*|*"Fedora"*)
-            rpm -qa > "$BACKUP_DIR/package_list.backup"
-            ;;
-    esac
-
     print_message "Updating system packages..."
     case "$OS" in
-        *"Ubuntu"*|*"Debian"*)
+        ubuntu|debian)
             apt update && apt upgrade -y
             check_status "Failed to update packages"
             ;;
-        *"CentOS"*|*"Red Hat"*)
-            # Add --nobest flag for better compatibility
-            dnf update -y --nobest
+        centos|rhel)
+            if command -v dnf >/dev/null 2>&1; then
+                dnf update -y
+            else
+                yum update -y
+            fi
             check_status "Failed to update packages"
             ;;
-        *"Fedora"*)
+        fedora)
             dnf update -y
             check_status "Failed to update packages"
             ;;
-        *"Arch"*)
+        arch)
             pacman -Syu --noconfirm
             check_status "Failed to update packages"
             ;;
     esac
 }
 
-# Enhanced repository enablement with error handling
+# Repository enablement
 enable_repos() {
     print_message "Enabling required repositories..."
     case "$OS" in
-        *"CentOS"*|*"Red Hat"*)
+        centos|rhel)
             # Backup repo configuration
             cp -r /etc/yum.repos.d/ "$BACKUP_DIR/repos.backup/"
             
-            # Install EPEL repository with version check
             if [[ $VERSION_ID == 8* ]]; then
                 dnf install -y "https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm"
-            else
-                dnf install -y epel-release
-            fi
-            check_status "Failed to install EPEL repository"
-            
-            # Enable CRB/PowerTools repository based on version
-            if [[ $VERSION_ID == 8* ]]; then
                 dnf config-manager --set-enabled powertools
             else
-                dnf config-manager --set-enabled crb
+                if command -v dnf >/dev/null 2>&1; then
+                    dnf install -y epel-release
+                    dnf config-manager --set-enabled crb
+                else
+                    yum install -y epel-release
+                fi
             fi
-            check_status "Failed to enable additional repositories"
+            check_status "Failed to enable repositories"
             ;;
     esac
 }
 
-# Enhanced package installation with dependency checking
+# Package installation
 install_packages() {
     print_message "Installing required packages..."
     
-    # Common dependencies check
-    local deps=(curl wget)
-    for dep in "${deps[@]}"; do
-        if ! command -v $dep &> /dev/null; then
-            case "$OS" in
-                *"Ubuntu"*|*"Debian"*)
-                    apt install -y $dep
-                    ;;
-                *"CentOS"*|*"Red Hat"*|*"Fedora"*)
-                    dnf install -y $dep
-                    ;;
-                *"Arch"*)
-                    pacman -S --noconfirm $dep
-                    ;;
-            esac
-        fi
-    done
-    
-    # Main package installation
+    # Common dependencies
+    local deps=(curl wget iproute2 sudo)
     case "$OS" in
-        *"Ubuntu"*|*"Debian"*)
-            apt install -y sudo ufw fail2ban
+        ubuntu|debian)
+            apt update
+            apt install -y "${deps[@]}" ufw fail2ban
             ;;
-        *"CentOS"*|*"Red Hat"*)
+        centos|rhel)
             enable_repos
-            dnf install -y sudo firewalld fail2ban
+            if command -v dnf >/dev/null 2>&1; then
+                dnf install -y "${deps[@]}" firewalld fail2ban
+            else
+                yum install -y "${deps[@]}" firewalld fail2ban
+            fi
             ;;
-        *"Fedora"*)
-            dnf install -y sudo firewalld fail2ban
+        fedora)
+            dnf install -y "${deps[@]}" firewalld fail2ban
             ;;
-        *"Arch"*)
-            pacman -S --noconfirm sudo ufw fail2ban
+        arch)
+            pacman -S --noconfirm "${deps[@]}" ufw fail2ban
             ;;
     esac
     check_status "Failed to install required packages"
 }
 
-# Rest of the original functions...
-# (create_user, restart_ssh, configure_ssh, configure_firewall, configure_fail2ban)
-# These remain largely unchanged but benefit from the enhanced error handling
-# and logging provided by the improved check_status and print_* functions
+# User creation
+create_user() {
+    print_message "Setting up user $USERNAME..."
+    
+    if id "$USERNAME" >/dev/null 2>&1; then
+        print_message "User $USERNAME already exists"
+    else
+        useradd -m -s /bin/bash "$USERNAME"
+        check_status "Failed to create user"
 
-# Enhanced main execution with better flow control
-main() {
-    print_message "Starting VPS setup at $(date)"
+        if [ "$NON_INTERACTIVE" != "true" ]; then
+            print_message "Setting password for $USERNAME"
+            passwd "$USERNAME"
+            check_status "Failed to set password"
+        fi
+    fi
+
+    # Add to sudo group
+    case "$OS" in
+        ubuntu|debian)
+            usermod -aG sudo "$USERNAME"
+            ;;
+        *)
+            usermod -aG wheel "$USERNAME"
+            ;;
+    esac
+    check_status "Failed to add user to sudo group"
+}
+
+# SSH configuration
+configure_ssh() {
+    print_message "Configuring SSH..."
     
-    # Create backup directory
-    mkdir -p "$BACKUP_DIR"
+    # Backup original config
+    cp /etc/ssh/sshd_config "$BACKUP_DIR/sshd_config.backup"
     
-    # Parse command line arguments
-    parse_arguments "$@"
+    # Configure SSH
+    sed -i.bak "
+        s/^#*Port .*/Port $SSH_PORT/
+        s/^#*PermitRootLogin .*/PermitRootLogin no/
+        s/^#*PasswordAuthentication .*/PasswordAuthentication no/
+        s/^#*PubkeyAuthentication .*/PubkeyAuthentication yes/
+    " /etc/ssh/sshd_config
     
-    # Basic checks
-    check_root
-    detect_os
+    echo "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
+    echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
     
-    # System preparation
-    update_system
-    install_packages
-    
-    # User management
-    create_user
-    
-    # Security configuration
-    configure_firewall
-    configure_ssh
-    configure_fail2ban
-    
-    # Final verification
-    print_message "Running final verification checks..."
-    
-    # Test SSH configuration
+    # Test config
     sshd -t
     check_status "SSH configuration test failed"
     
-    # Verify services are running
-    systemctl is-active --quiet sshd
-    check_status "SSH service is not running"
+    # Restart SSH service
+    if systemctl is-active --quiet ssh; then
+        systemctl restart ssh
+    elif systemctl is-active --quiet sshd; then
+        systemctl restart sshd
+    else
+        print_error "SSH service not found"
+        exit 1
+    fi
+    check_status "Failed to restart SSH service"
+}
+
+# Firewall configuration
+configure_firewall() {
+    print_message "Configuring firewall..."
+    case "$OS" in
+        ubuntu|debian|arch)
+            ufw allow "$SSH_PORT"/tcp
+            ufw --force enable
+            if [ "$SSH_PORT" != "22" ]; then
+                ufw deny 22/tcp
+            fi
+            check_status "Failed to configure UFW"
+            ;;
+        centos|rhel|fedora)
+            systemctl start firewalld
+            systemctl enable firewalld
+            firewall-cmd --permanent --add-port="$SSH_PORT"/tcp
+            if [ "$SSH_PORT" != "22" ]; then
+                firewall-cmd --permanent --remove-service=ssh
+            fi
+            firewall-cmd --reload
+            check_status "Failed to configure firewalld"
+            ;;
+    esac
+}
+
+# Fail2ban configuration
+configure_fail2ban() {
+    print_message "Configuring fail2ban..."
     
-    systemctl is-active --quiet fail2ban
-    check_status "Fail2ban service is not running"
+    cat > /etc/fail2ban/jail.local << EOF
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 3
+
+[sshd]
+enabled = true
+port = $SSH_PORT
+filter = sshd
+logpath = %(sshd_log)s
+maxretry = 3
+bantime = 3600
+EOF
+    check_status "Failed to create fail2ban configuration"
+
+    systemctl enable fail2ban
+    systemctl restart fail2ban
+    check_status "Failed to start fail2ban"
+}
+
+# Main execution
+main() {
+    print_message "Starting VPS setup at $(date)"
+    
+    parse_arguments "$@"
+    check_root
+    detect_os
+    
+    # Validate inputs
+    validate_username "$USERNAME"
+    validate_ssh_port "$SSH_PORT"
+    
+    # System setup
+    update_system
+    install_packages
+    
+    # User and security setup
+    create_user
+    configure_firewall
+    configure_ssh
+    configure_fail2ban
     
     print_message "Setup completed successfully!"
     print_warning "New SSH port: $SSH_PORT"
