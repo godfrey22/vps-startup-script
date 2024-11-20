@@ -1,155 +1,85 @@
-# VPS Initial Setup Script
+# VPS Startup Security Script
 
-A secure initialization script for Linux VPS servers that automates the setup of a new user, SSH hardening, and basic security configurations.
+A bash script for quick and secure setup of a new Linux VPS. This script automates essential security configurations to protect your server from common vulnerabilities.
 
 ## Features
 
-- ✅ Creates a new sudo user
-- 🔒 Hardens SSH configuration
-- 🔥 Configures firewall (UFW/firewalld)
-- 🛡️ Sets up fail2ban
-- 📝 Comprehensive logging
-- 🔄 Supports multiple Linux distributions
-- 🤖 Supports both interactive and non-interactive modes
-
-## Supported Operating Systems
-
-- Ubuntu
-- Debian
-- CentOS
-- Red Hat Enterprise Linux
-- Fedora
-- Arch Linux
-
-## Prerequisites
-
-- Root access to your VPS
-- SSH public key ready on your local machine
+- 🔑 SSH key authentication only (more secure than passwords)
+- 🚫 Disables root SSH login
+- 🔒 Disables password authentication
+- 🚪 Custom SSH port
+- 🛡️ Automatic firewall configuration
+- ✅ Works on Ubuntu/Debian (UFW) and CentOS/RHEL (firewalld)
 
 ## Quick Start
 
-1. Download the script:
+1. Clone the repository:
 ```bash
-wget https://raw.githubusercontent.com/godfrey22/vps-startup-script/refs/heads/main/startup.sh
+git clone https://github.com/godfrey22/vps-startup-script.git
 ```
 
-2. Make it executable:
+2. Make the script executable:
 ```bash
 chmod +x startup.sh
 ```
 
-3. Run the script:
+3. Run as root:
 ```bash
-./startup.sh
+sudo ./startup.sh
 ```
 
-## Usage
-
-### Interactive Mode (Recommended)
-
-Run the script without parameters to enter interactive mode:
-```bash
-./startup.sh
-```
-
-The script will prompt you for:
-- Username for the new account
+4. The script will prompt you for:
+- New username to create
 - Password for the new user
-- SSH port (default: 2222)
+- Desired SSH port
 - Your public SSH key
 
-### Non-Interactive Mode
+## Verifying the Setup
 
-For automated deployments, use command-line arguments:
+After running the script, verify your security settings:
+
+Check listening ports:
 ```bash
-./startup.sh --username myuser --ssh-port 2222 --non-interactive
+ss -tuln
 ```
 
-### Available Options
+Verify SSH configuration:
+```bash
+sudo grep -E '^(PermitRootLogin|PasswordAuthentication|Port) ' /etc/ssh/sshd_config
+```
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--username` | Username for the new account | (Required in non-interactive mode) |
-| `--ssh-port` | Custom SSH port | 2222 |
-| `--non-interactive` | Run without prompts | false |
-| `--help` | Show help message | - |
+Check firewall status:
+```bash
+# For Ubuntu/Debian
+sudo ufw status
+
+# For CentOS/RHEL
+sudo firewall-cmd --list-all
+```
+
+## Important Warning
+
+⚠️ Always test your new SSH connection in a new terminal window before closing your current session to prevent lockouts.
+
+## Requirements
+
+- Root access to your VPS
+- A Linux VPS (Ubuntu, Debian, CentOS, or RHEL)
+- Your SSH public key
 
 ## Security Features
 
-The script implements the following security measures:
-
-1. **SSH Hardening**
-   - Disables root login
-   - Disables password authentication
-   - Enables public key authentication only
-   - Changes default SSH port
-   - Restricts SSH access to specific user
-
-2. **Firewall Configuration**
-   - Enables UFW/firewalld
-   - Opens only the specified SSH port
-   - Blocks default SSH port (22)
-
-3. **Fail2ban Setup**
-   - Configures bruteforce protection
-   - Custom jail rules for SSH
-   - 1-hour ban time for failed attempts
-
-## Logging
-
-The script creates detailed logs at `/var/log/vps_setup.log` for troubleshooting.
-
-## Safety Measures
-
-- Creates backup of original SSH configuration
-- Validates all user inputs
-- Tests SSH configuration before applying
-- Checks for command execution status
-- Implements proper error handling
-
-## Post-Installation
-
-After running the script:
-
-1. **Keep your current session open**
-2. **Test new connection in a new terminal:**
-```bash
-ssh -p <new_port> <new_username>@your_vps_ip
-```
-3. **Only close the original session after confirming new connection works**
-
-## Troubleshooting
-
-If you encounter issues:
-
-1. Check the log file:
-```bash
-cat /var/log/vps_setup.log
-```
-
-2. Original SSH config backup is available at:
-```bash
-/etc/ssh/sshd_config.backup
-```
+The script implements these security measures:
+- Changes SSH port to reduce automated attacks
+- Enforces SSH key authentication
+- Disables root login via SSH
+- Disables password authentication
+- Configures basic firewall rules
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Issues and pull requests are welcome! Feel free to contribute to improve the script.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Author
-
-Godfrey Gao ([@godfrey22](https://github.com/godfrey22))  
-Email: zhuorui.gao@gmail.com
-
-## Acknowledgments
-
-- ChatGPT and Claude for code review and suggestions
-- The Linux community for security best practices
-
-## Security Note
-
-While this script implements various security measures, always review the code and adjust configurations according to your specific security requirements.
+MIT License
