@@ -30,7 +30,7 @@ A secure initialization script for Linux VPS servers that automates the setup of
 
 1. Download the script:
 ```bash
-wget https://raw.githubusercontent.com/godfrey22/vps-startup-script/main/setup.sh
+wget https://raw.githubusercontent.com/godfrey22/vps-startup-script/refs/heads/main/startup.sh
 ```
 
 2. Make it executable:
