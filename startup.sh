@@ -116,7 +116,8 @@ update_system() {
             check_status "Failed to update packages"
             ;;
         *"CentOS"*|*"Red Hat"*)
-            yum update -y
+            # Add --nobest flag to handle package conflicts
+            dnf update -y --nobest
             check_status "Failed to update packages"
             ;;
         *"Fedora"*)

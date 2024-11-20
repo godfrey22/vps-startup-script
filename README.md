@@ -35,12 +35,12 @@ wget https://raw.githubusercontent.com/godfrey22/vps-startup-script/refs/heads/m
 
 2. Make it executable:
 ```bash
-chmod +x setup.sh
+chmod +x startup.sh
 ```
 
 3. Run the script:
 ```bash
-./setup.sh
+./startup.sh
 ```
 
 ## Usage
