@@ -469,14 +469,33 @@ configure_firewall() {
             check_status "Failed to configure UFW"
             ;;
         centos|rhel|fedora)
-            systemctl start firewalld
-            systemctl enable firewalld
-            firewall-cmd --permanent --add-port="$SSH_PORT"/tcp
+            # Stop firewalld first to avoid conflicts
+            systemctl stop firewalld
+            systemctl disable firewalld
+            
+            # Clean up any existing iptables rules for SSH
+            iptables -D INPUT -p tcp --dport "$SSH_PORT" -j DROP 2>/dev/null || true
+            iptables -D INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT 2>/dev/null || true
+            
+            # Add new ACCEPT rule for SSH port
+            iptables -I INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT
+            
+            # If using non-standard port, remove access to port 22
             if [ "$SSH_PORT" != "22" ]; then
-                firewall-cmd --permanent --remove-service=ssh
+                iptables -D INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+                iptables -A INPUT -p tcp --dport 22 -j DROP
             fi
-            firewall-cmd --reload
-            check_status "Failed to configure firewalld"
+            
+            # Make iptables rules persistent
+            if command -v iptables-save >/dev/null 2>&1; then
+                iptables-save > /etc/sysconfig/iptables
+            else
+                print_warning "iptables-save not found. Firewall rules may not persist after reboot"
+            fi
+            
+            print_message "Verifying firewall rules..."
+            iptables -L -n -v | grep "$SSH_PORT"
+            check_status "Failed to verify firewall rules"
             ;;
     esac
 }
