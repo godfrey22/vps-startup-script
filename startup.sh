@@ -183,7 +183,7 @@ validate_ssh_port() {
     SSH_PORT=$port
 }
 
-# System update
+# System update with better package conflict handling
 update_system() {
     print_message "Updating system packages..."
     case "$OS" in
@@ -193,14 +193,37 @@ update_system() {
             ;;
         centos|rhel)
             if command -v dnf >/dev/null 2>&1; then
-                dnf update -y
+                # Try normal update first
+                if ! dnf update -y; then
+                    print_warning "Normal update failed, attempting with --nobest option..."
+                    if ! dnf update -y --nobest; then
+                        print_warning "Update with --nobest failed, trying with --skip-broken..."
+                        if ! dnf update -y --skip-broken; then
+                            print_warning "Update with --skip-broken failed, attempting critical updates only..."
+                            # Update only security and critical packages
+                            if ! dnf update -y --security; then
+                                print_error "All update attempts failed"
+                                exit 1
+                            fi
+                        fi
+                    fi
+                fi
             else
-                yum update -y
+                # For older systems using yum
+                if ! yum update -y; then
+                    print_warning "Normal update failed, attempting with --skip-broken..."
+                    if ! yum update -y --skip-broken; then
+                        print_error "All update attempts failed"
+                        exit 1
+                    fi
+                fi
             fi
-            check_status "Failed to update packages"
             ;;
         fedora)
-            dnf update -y
+            if ! dnf update -y; then
+                print_warning "Normal update failed, attempting with --skip-broken..."
+                dnf update -y --skip-broken
+            fi
             check_status "Failed to update packages"
             ;;
         arch)
