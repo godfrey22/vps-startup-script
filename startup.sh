@@ -136,6 +136,17 @@ update_system() {
 }
 
 # Install required packages
+enable_repos() {
+    print_message "Enabling required repositories..."
+    case "$OS" in
+        *"CentOS"*|*"Red Hat"*)
+            # Install EPEL repository
+            dnf install -y epel-release
+            dnf config-manager --set-enabled crb  # Enable CRB repo (needed for some EPEL packages)
+            check_status "Failed to enable repositories"
+            ;;
+    esac
+}
 install_packages() {
     print_message "Installing required packages..."
     case "$OS" in
@@ -143,7 +154,10 @@ install_packages() {
             apt install -y sudo ufw fail2ban
             ;;
         *"CentOS"*|*"Red Hat"*)
-            yum install -y sudo firewalld fail2ban
+            # First enable required repos
+            enable_repos
+            # Install packages
+            dnf install -y sudo firewalld fail2ban
             ;;
         *"Fedora"*)
             dnf install -y sudo firewalld fail2ban
@@ -289,6 +303,7 @@ print_message "Starting VPS setup at $(date)"
 check_root
 detect_os
 update_system
+enable_repos     
 install_packages
 create_user
 configure_ssh
