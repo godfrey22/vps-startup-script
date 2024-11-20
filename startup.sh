@@ -175,9 +175,9 @@ install_packages() {
     check_status "Failed to install required packages"
 }
 
-# Create new user
+# Update the create_user function
 create_user() {
-    print_message "Creating new user..."
+    print_message "Checking user..."
     
     if [ -z "$USERNAME" ] && [ "$NON_INTERACTIVE" != "true" ]; then
         read -p "Enter username: " USERNAME
@@ -186,10 +186,11 @@ create_user() {
     validate_username "$USERNAME"
     
     if id "$USERNAME" &>/dev/null; then
-        print_error "User already exists"
-        exit 1
+        print_message "User $USERNAME already exists, skipping user creation"
+        return 0
     fi
     
+    print_message "Creating new user $USERNAME..."
     # Create user with home directory
     useradd -m -s /bin/bash "$USERNAME"
     check_status "Failed to create user"
