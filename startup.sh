@@ -207,7 +207,18 @@ create_user() {
     check_status "Failed to add user to sudo group"
 }
 
-# Configure SSH
+# Add this function to handle SSH service
+restart_ssh() {
+    print_message "Restarting SSH service..."
+    if [[ $OS == *"Ubuntu"* ]] || [[ $OS == *"Debian"* ]]; then
+        systemctl restart sshd
+    elif [[ $OS == *"CentOS"* ]] || [[ $OS == *"Red Hat"* ]] || [[ $OS == *"Fedora"* ]]; then
+        systemctl restart sshd
+    fi
+    check_status "Failed to restart SSH service"
+}
+
+# Update the configure_ssh function to immediately apply changes
 configure_ssh() {
     print_message "Configuring SSH..."
     
@@ -238,10 +249,10 @@ configure_ssh() {
     check_status "Failed to set SSH directory permissions"
     
     # Modify sshd_config
-    sed -i "s/#Port 22/Port $SSH_PORT/" /etc/ssh/sshd_config
-    sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
+    sed -i 's/^#*PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^#*PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
     echo "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
     echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
     check_status "Failed to modify sshd_config"
@@ -249,6 +260,9 @@ configure_ssh() {
     # Test SSH config
     sshd -t
     check_status "SSH configuration test failed"
+    
+    # Apply changes
+    restart_ssh
 }
 
 # Configure firewall
@@ -256,17 +270,27 @@ configure_firewall() {
     print_message "Configuring firewall..."
     case "$OS" in
         *"Ubuntu"*|*"Debian"*|*"Arch"*)
+            # First allow the new port before blocking the old one
             ufw allow $SSH_PORT/tcp
-            ufw deny 22/tcp
             ufw --force enable
+            # Only block port 22 if it's different from new SSH port
+            if [ "$SSH_PORT" != "22" ]; then
+                ufw deny 22/tcp
+            fi
+            ufw status
             check_status "Failed to configure UFW"
             ;;
         *"CentOS"*|*"Red Hat"*|*"Fedora"*)
             systemctl start firewalld
             systemctl enable firewalld
+            # First add the new port
             firewall-cmd --permanent --add-port=$SSH_PORT/tcp
-            firewall-cmd --permanent --remove-service=ssh
+            # Only remove ssh service if using non-standard port
+            if [ "$SSH_PORT" != "22" ]; then
+                firewall-cmd --permanent --remove-service=ssh
+            fi
             firewall-cmd --reload
+            firewall-cmd --list-all
             check_status "Failed to configure firewalld"
             ;;
     esac
@@ -298,20 +322,22 @@ EOF
     check_status "Failed to start fail2ban"
 }
 
-# Main execution
+# Update main execution order
 print_message "Starting VPS setup at $(date)"
 check_root
 detect_os
 update_system
-enable_repos     
+enable_repos
 install_packages
 create_user
-configure_ssh
+# Configure firewall first
 configure_firewall
-configure_fail2ban
+# Then configure SSH and restart it
+configure_ssh
 
 print_message "Setup completed! Please test new SSH connection before closing this session."
 print_warning "New SSH port: $SSH_PORT"
 print_warning "New username: $USERNAME"
 print_warning "Make sure you can login with your SSH key before closing this session!"
+print_warning "Test with: ssh -p $SSH_PORT $USERNAME@<your-ip>"
 print_message "Setup log available at: $LOG_FILE"
