@@ -92,9 +92,12 @@ validate_username() {
     fi
 }
 
-# Validate SSH port
+# Also update the validation function to be more strict
 validate_ssh_port() {
     local port=$1
+    # Remove any non-numeric characters
+    port=$(echo $port | sed 's/[^0-9]*//g')
+    
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -le 0 ] || [ "$port" -gt 65535 ]; then
         print_error "Invalid port number. Please enter a value between 1 and 65535."
         exit 1
@@ -105,6 +108,9 @@ validate_ssh_port() {
         print_error "Port $port is already in use"
         exit 1
     fi
+    
+    # Update the global SSH_PORT variable with cleaned value
+    SSH_PORT=$port
 }
 
 # Update system packages based on OS
@@ -265,15 +271,13 @@ configure_ssh() {
     restart_ssh
 }
 
-# Configure firewall
+# Update the configure_firewall function
 configure_firewall() {
     print_message "Configuring firewall..."
     case "$OS" in
         *"Ubuntu"*|*"Debian"*|*"Arch"*)
-            # First allow the new port before blocking the old one
             ufw allow $SSH_PORT/tcp
             ufw --force enable
-            # Only block port 22 if it's different from new SSH port
             if [ "$SSH_PORT" != "22" ]; then
                 ufw deny 22/tcp
             fi
@@ -281,17 +285,24 @@ configure_firewall() {
             check_status "Failed to configure UFW"
             ;;
         *"CentOS"*|*"Red Hat"*|*"Fedora"*)
+            # Start and enable firewalld
             systemctl start firewalld
             systemctl enable firewalld
-            # First add the new port
-            firewall-cmd --permanent --add-port=$SSH_PORT/tcp
-            # Only remove ssh service if using non-standard port
-            if [ "$SSH_PORT" != "22" ]; then
-                firewall-cmd --permanent --remove-service=ssh
-            fi
+            
+            # Clear any existing SSH port rules
+            firewall-cmd --permanent --remove-service=ssh || true
+            
+            # Add the new SSH port - make sure it's handled as a number
+            SSH_PORT_NUM=$(echo $SSH_PORT | sed 's/[^0-9]*//g')
+            firewall-cmd --permanent --add-port=${SSH_PORT_NUM}/tcp
+            check_status "Failed to add new SSH port to firewall"
+            
+            # Reload to apply changes
             firewall-cmd --reload
+            
+            # Verify configuration
+            print_message "Current firewall configuration:"
             firewall-cmd --list-all
-            check_status "Failed to configure firewalld"
             ;;
     esac
 }
