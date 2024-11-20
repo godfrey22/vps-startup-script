@@ -49,7 +49,7 @@ chmod +x startup.sh
 
 Run the script without parameters to enter interactive mode:
 ```bash
-./setup.sh
+./startup.sh
 ```
 
 The script will prompt you for:
@@ -62,7 +62,7 @@ The script will prompt you for:
 
 For automated deployments, use command-line arguments:
 ```bash
-./setup.sh --username myuser --ssh-port 2222 --non-interactive
+./startup.sh --username myuser --ssh-port 2222 --non-interactive
 ```
 
 ### Available Options
