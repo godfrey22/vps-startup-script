@@ -24,6 +24,10 @@ read -p "Enter your public SSH key: " SSH_KEY
 
 # Create new user
 useradd -m -s /bin/bash "$USERNAME"
+if [ $? -ne 0 ]; then
+    log_error "Failed to create user $USERNAME"
+    exit 1
+fi
 echo "$USERNAME:$PASSWORD" | chpasswd
 usermod -aG sudo "$USERNAME"
 
@@ -36,24 +40,35 @@ chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.ssh"
 
 # Configure SSH
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-sed -i "s/#Port 22/Port $SSH_PORT/" /etc/ssh/sshd_config
+sed -i "/^#Port 22/c\Port $SSH_PORT" /etc/ssh/sshd_config
+sed -i "/^Port /c\Port $SSH_PORT" /etc/ssh/sshd_config
 sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
 
-# Configure firewall based on detected package manager
+# Test SSH configuration before restart
+sshd -t
+if [ $? -ne 0 ]; then
+    log_error "SSH configuration test failed. Please review the changes."
+    exit 1
+fi
+
+# Configure firewall
 if command -v ufw >/dev/null 2>&1; then
-    # Ubuntu/Debian
     ufw allow "$SSH_PORT/tcp"
     ufw --force enable
+    log_success "Firewall configured with ufw for SSH port $SSH_PORT"
 elif command -v firewall-cmd >/dev/null 2>&1; then
-    # CentOS/RHEL
     firewall-cmd --permanent --add-port="$SSH_PORT/tcp"
     firewall-cmd --reload
+    log_success "Firewall configured with firewall-cmd for SSH port $SSH_PORT"
+else
+    log_error "No supported firewall found. Please configure manually."
 fi
 
 # Restart SSH service
 systemctl restart sshd
+log_success "SSH service restarted successfully"
 
 log_success "Setup completed!"
 log_success "New user: $USERNAME"
