@@ -353,23 +353,81 @@ configure_ssh() {
     
     # Backup original config
     cp /etc/ssh/sshd_config "$BACKUP_DIR/sshd_config.backup"
+    check_status "Failed to backup SSH config"
     
-    # Configure SSH
+    # Set up SSH directory and permissions
+    local ssh_dir="/home/$USERNAME/.ssh"
+    local auth_keys="$ssh_dir/authorized_keys"
+    
+    mkdir -p "$ssh_dir"
+    touch "$auth_keys"
+    
+    # Set proper permissions
+    chmod 700 "$ssh_dir"
+    chmod 600 "$auth_keys"
+    chown -R "$USERNAME:$USERNAME" "$ssh_dir"
+    
+    # Collect SSH public key
+    if [ "$NON_INTERACTIVE" != "true" ]; then
+        while true; do
+            print_message "Please paste your SSH public key (it should start with 'ssh-rsa' or 'ssh-ed25519'):"
+            local pubkey
+            read -r pubkey
+            
+            # Validate the SSH key format
+            if [[ "$pubkey" =~ ^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)[[:space:]] ]]; then
+                echo "$pubkey" >> "$auth_keys"
+                check_status "Failed to add SSH key"
+                print_message "SSH public key added successfully"
+                break
+            else
+                print_error "Invalid SSH key format. It should start with 'ssh-rsa', 'ssh-ed25519', or 'ecdsa-sha2-*'"
+                print_message "Example of a valid key:"
+                print_message "ssh-rsa AAAAB3NzaC1yc2E... user@host"
+                read -p "Try again? (y/n): " retry
+                if [[ ! "$retry" =~ ^[Yy] ]]; then
+                    print_error "SSH key setup aborted. You won't be able to log in without a valid key."
+                    exit 1
+                fi
+            fi
+        done
+    fi
+    
+    # Configure sshd_config
+    print_message "Configuring SSH daemon..."
     sed -i.bak "
         s/^#*Port .*/Port $SSH_PORT/
         s/^#*PermitRootLogin .*/PermitRootLogin no/
         s/^#*PasswordAuthentication .*/PasswordAuthentication no/
         s/^#*PubkeyAuthentication .*/PubkeyAuthentication yes/
+        s/^#*AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/
+        s/^#*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/
     " /etc/ssh/sshd_config
     
-    echo "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
-    echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
+    # Add or update AllowUsers directive
+    if grep -q "^AllowUsers" /etc/ssh/sshd_config; then
+        sed -i "s/^AllowUsers.*/& $USERNAME/" /etc/ssh/sshd_config
+    else
+        echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
+    fi
     
-    # Test config
+    # Add additional security configurations
+    cat >> /etc/ssh/sshd_config << EOF
+
+# Additional security settings
+PermitEmptyPasswords no
+MaxAuthTries 3
+ClientAliveInterval 300
+ClientAliveCountMax 2
+EOF
+    
+    # Test SSH configuration
+    print_message "Testing SSH configuration..."
     sshd -t
     check_status "SSH configuration test failed"
     
     # Restart SSH service
+    print_message "Restarting SSH service..."
     if systemctl is-active --quiet ssh; then
         systemctl restart ssh
     elif systemctl is-active --quiet sshd; then
@@ -379,7 +437,24 @@ configure_ssh() {
         exit 1
     fi
     check_status "Failed to restart SSH service"
+    
+    # Verify the key was properly set
+    if [ -s "$auth_keys" ]; then
+        print_message "SSH configuration completed successfully"
+        print_message "You can now connect using: ssh -p $SSH_PORT $USERNAME@<server-ip>"
+    else
+        print_warning "No SSH key was added to authorized_keys"
+        print_warning "You will need to add a key manually to connect"
+    fi
+    
+    # Display current SSH port and settings
+    print_message "Current SSH settings:"
+    echo "Port: $SSH_PORT"
+    echo "User: $USERNAME"
+    echo "Public key authentication: enabled"
+    echo "Password authentication: disabled"
 }
+
 
 # Firewall configuration
 configure_firewall() {
