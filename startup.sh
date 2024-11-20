@@ -257,33 +257,65 @@ enable_repos() {
     esac
 }
 
-# Package installation
+# Package installation with proper package names per distribution
 install_packages() {
     print_message "Installing required packages..."
     
-    # Common dependencies
-    local deps=(curl wget iproute2 sudo)
     case "$OS" in
         ubuntu|debian)
+            local deps=(curl wget iproute2 sudo ufw fail2ban)
             apt update
-            apt install -y "${deps[@]}" ufw fail2ban
+            apt install -y "${deps[@]}"
             ;;
         centos|rhel)
+            local deps=(curl wget iproute sudo firewalld fail2ban)
             enable_repos
             if command -v dnf >/dev/null 2>&1; then
-                dnf install -y "${deps[@]}" firewalld fail2ban
+                # First check which packages need to be installed
+                local to_install=()
+                for pkg in "${deps[@]}"; do
+                    if ! rpm -q "$pkg" &>/dev/null; then
+                        to_install+=("$pkg")
+                    else
+                        print_message "Package $pkg is already installed"
+                    fi
+                done
+                
+                # Install only missing packages
+                if [ ${#to_install[@]} -gt 0 ]; then
+                    dnf install -y "${to_install[@]}"
+                else
+                    print_message "All required packages are already installed"
+                fi
             else
-                yum install -y "${deps[@]}" firewalld fail2ban
+                yum install -y "${deps[@]}"
             fi
             ;;
         fedora)
-            dnf install -y "${deps[@]}" firewalld fail2ban
+            local deps=(curl wget iproute sudo firewalld fail2ban)
+            dnf install -y "${deps[@]}"
             ;;
         arch)
-            pacman -S --noconfirm "${deps[@]}" ufw fail2ban
+            local deps=(curl wget iproute2 sudo ufw fail2ban)
+            pacman -S --noconfirm "${deps[@]}"
             ;;
     esac
     check_status "Failed to install required packages"
+
+    # Verify critical commands are available
+    local required_commands=(curl wget ip sudo)
+    local missing_commands=()
+    
+    for cmd in "${required_commands[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing_commands+=("$cmd")
+        fi
+    done
+    
+    if [ ${#missing_commands[@]} -gt 0 ]; then
+        print_error "Some required commands are still missing: ${missing_commands[*]}"
+        exit 1
+    fi
 }
 
 # User creation
